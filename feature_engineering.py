@@ -13,13 +13,13 @@ def main():
     print("Removendo linhas com rating nulo...")
     df = df.filter(pl.col("rating").is_not_null())
 
-    print("Card 2: calculando running_mean...")
+    print("Calculando running_mean...")
     df = add_running_mean(df)
 
-    print("Card 3: calculando centered_rating...")
+    print("Calculando centered_rating...")
     df = add_centered_rating(df)
 
-    print("Card 5: calculando split treino/val/teste...")
+    print("Calculando split treino/val/teste...")
     df = add_data_split(df)
 
     print(f"Salvando {OUTPUT_PATH}...")
