@@ -3,3 +3,4 @@ pandas==2.2.2
 matplotlib==3.10.0
 polars
 pyarrow
+sentence-transformers
