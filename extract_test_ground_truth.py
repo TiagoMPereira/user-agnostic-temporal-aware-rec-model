@@ -3,9 +3,10 @@
 Le o dataset de interacoes ja processado pelo feature engineering
 (feature_engineering.py), que ja contem `split`, filtra apenas as
 linhas de teste e mantem somente uid, app_package e timestamp
-(formated_date) -- as mesmas chaves (uid, timestamp) usadas nos
-arquivos de predicao (predict_random.py, predict_pop.py), para
-comparar o app_package realmente consumido contra os rankings
+(formated_date, renomeada para `timestamp`) -- as mesmas chaves
+(uid, timestamp) usadas nos arquivos de predicao (predict_random.py,
+predict_pop.py) e esperadas pelo modulo de metricas (metrics/, Card 10),
+para comparar o app_package realmente consumido contra os rankings
 preditos.
 """
 
@@ -23,7 +24,7 @@ def main():
     test_df = df.filter(pl.col("split") == "test").select(
         pl.col("uid"),
         pl.col("app_package"),
-        pl.col("formated_date"),
+        pl.col("formated_date").alias("timestamp"),
     )
 
     print(f"Salvando {OUTPUT_PATH}...")

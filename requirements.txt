@@ -4,3 +4,4 @@ matplotlib==3.10.0
 polars
 pyarrow
 sentence-transformers
+openpyxl
