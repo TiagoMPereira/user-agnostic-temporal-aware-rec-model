@@ -9,6 +9,7 @@
 import pandas as pd
 import re
 import polars as pl
+import json
 
 def remove_illegal_char(column: pd.Series):
     # ASCII characters
@@ -38,6 +39,13 @@ metadata = pd.read_csv('data/input/metadata.csv', usecols=metadata_cols)
 metadata["description"] = remove_illegal_char(metadata["description"])
 metadata["description"] = metadata["description"].apply(clean_text)
 
+app_package_map = {p: i for i, p in enumerate(metadata["app_package"].unique())}
+metadata['app_package'] = metadata['app_package'].replace(app_package_map)
+
+print("Salvando mapeamento do app_package")
+with open("data/input/app_map.json", "w") as fp:
+    json.dump(app_package_map, fp)
+
 print("Salvando metadados dos apps em csv...")
 metadata.to_csv('data/processed/metadata.csv', index=False)
 
@@ -57,6 +65,8 @@ interactions_cols = [
 
 interactions = pd.read_csv('data/input/interactions.csv', usecols=interactions_cols)
 interactions['formated_date'] = pd.to_datetime(interactions['formated_date'])
+
+interactions["app_package"] = interactions["app_package"].replace(app_package_map)
 
 print("Salvando interações em csv...")
 interactions.to_csv('data/processed/interactions.csv', index=False)
