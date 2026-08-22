@@ -65,7 +65,6 @@ TIEBREAK_SCALE = 1e-6  # perturbacao do tiebreak: bem menor que 1 para nao afeta
 
 REC_COLS = [f"rec{j:03d}" for j in range(N_RECS)]
 SCHEMA = ["uid", "timestamp", *REC_COLS]
-DTYPES = {col: pl.Utf8 for col in SCHEMA}
 
 
 def parse_window(value: str) -> int | None:
@@ -100,14 +99,20 @@ def main(window: int | None):
         matrix = matrix.with_columns(pl.col(DATE_COL).str.to_date())
     matrix = matrix.sort(DATE_COL)
 
-    catalog = [c for c in matrix.columns if c != DATE_COL]  # ja ordenado (Card 4)
+    catalog = [c for c in matrix.columns if c != DATE_COL]  # ja ordenado (Card 4), nomes de coluna sao sempre str
     n_items = len(catalog)
     matrix_dates = matrix[DATE_COL].to_numpy()  # datetime64[D], ascendente
     matrix_values = matrix.drop(DATE_COL).to_numpy().astype(np.int64)  # (n_datas, n_items)
 
     print(f"Lendo {INTERACTIONS_PATH}...")
     df = pl.read_parquet(INTERACTIONS_PATH).sort(["uid", "interaction_rank"])
-    df = df.with_columns(pl.col("app_package").cast(pl.Enum(catalog)))
+    app_dtype = df.schema["app_package"]
+    # catalog vem dos nomes de coluna da matrix (sempre str); convertido de volta
+    # para o dtype real de app_package para casar por valor no cast pra Enum
+    # (cast direto de Int64 pra Enum reinterpreta o int como codigo/posicao, nao
+    # como valor) e para os ids de saida terem o mesmo tipo do ground truth.
+    catalog_native = pl.Series(catalog, dtype=pl.Utf8).cast(app_dtype).to_list()
+    df = df.with_columns(pl.col("app_package").cast(pl.Utf8).cast(pl.Enum(catalog)))
     df = df.with_columns(
         (pl.col("uid") != pl.col("uid").shift(1)).fill_null(True).alias("_new_user")
     )
@@ -129,6 +134,8 @@ def main(window: int | None):
 
     zero_row = np.zeros(n_items, dtype=np.int64)
     tiebreak = np.random.default_rng(TIEBREAK_SEED).random(n_items)
+
+    dtypes = {"uid": pl.Utf8, "timestamp": pl.Utf8, **{col: app_dtype for col in REC_COLS}}
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -169,13 +176,13 @@ def main(window: int | None):
             order = top_part[np.argsort(-composite[top_part])]
             top_idx = candidate_idx[order]
 
-            preds = [catalog[c] for c in top_idx]
+            preds = [catalog_native[c] for c in top_idx]
             preds += [None] * (N_RECS - len(preds))
             batch.append((uids[i], timestamps[i], *preds))
             test_ptr += 1
 
             if len(batch) >= BATCH_SIZE:
-                writer = _flush(batch, writer, output_path)
+                writer = _flush(batch, writer, output_path, dtypes)
                 total_written += len(batch)
                 print(f"  {total_written} linhas de teste processadas...")
                 batch = []
@@ -183,7 +190,7 @@ def main(window: int | None):
         mask[codes[i]] = 1
 
     if batch:
-        writer = _flush(batch, writer, output_path)
+        writer = _flush(batch, writer, output_path, dtypes)
         total_written += len(batch)
 
     if writer is not None:
@@ -200,11 +207,11 @@ def main(window: int | None):
     print("Concluido!")
 
 
-def _flush(batch: list, writer, output_path: str) -> pq.ParquetWriter:
+def _flush(batch: list, writer, output_path: str, dtypes: dict) -> pq.ParquetWriter:
     """Converte um lote de linhas para colunar e escreve no parquet, sem
     acumular nada alem desse lote em memoria."""
     columns = dict(zip(SCHEMA, zip(*batch)))
-    table = pl.DataFrame(columns, schema=DTYPES).to_arrow()
+    table = pl.DataFrame(columns, schema=dtypes).to_arrow()
 
     if writer is None:
         writer = pq.ParquetWriter(output_path, table.schema)

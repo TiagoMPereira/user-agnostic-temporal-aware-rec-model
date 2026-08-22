@@ -33,12 +33,14 @@ BATCH_SIZE = 200_000  # linhas de teste por lote escrito no parquet, controla o 
 
 REC_COLS = [f"rec{j:03d}" for j in range(N_RECS)]
 SCHEMA = ["uid", "timestamp", *REC_COLS]
-DTYPES = {col: pl.Utf8 for col in SCHEMA}
 
 
 def main():
     print(f"Lendo {INPUT_PATH}...")
     df = pl.read_parquet(INPUT_PATH).sort(["uid", "interaction_rank"])
+
+    app_dtype = df.schema["app_package"]
+    dtypes = {"uid": pl.Utf8, "timestamp": pl.Utf8, **{col: app_dtype for col in REC_COLS}}
 
     catalog = sorted(df["app_package"].unique().to_list())
     model = RandomModel()
@@ -69,7 +71,7 @@ def main():
             batch.append((uid, timestamp, *preds))
 
             if len(batch) >= BATCH_SIZE:
-                writer = _flush(batch, writer)
+                writer = _flush(batch, writer, dtypes)
                 total_written += len(batch)
                 print(f"  {total_written} linhas de teste processadas...")
                 batch = []
@@ -77,7 +79,7 @@ def main():
         consumed.add(app)
 
     if batch:
-        writer = _flush(batch, writer)
+        writer = _flush(batch, writer, dtypes)
         total_written += len(batch)
 
     if writer is not None:
@@ -93,11 +95,11 @@ def main():
     print("Concluido!")
 
 
-def _flush(batch: list, writer) -> pq.ParquetWriter:
+def _flush(batch: list, writer, dtypes: dict) -> pq.ParquetWriter:
     """Converte um lote de linhas para colunar e escreve no parquet, sem
     acumular nada alem desse lote em memoria."""
     columns = dict(zip(SCHEMA, zip(*batch)))
-    table = pl.DataFrame(columns, schema=DTYPES).to_arrow()
+    table = pl.DataFrame(columns, schema=dtypes).to_arrow()
 
     if writer is None:
         writer = pq.ParquetWriter(OUTPUT_PATH, table.schema)
