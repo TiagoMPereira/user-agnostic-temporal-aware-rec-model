@@ -59,8 +59,8 @@ RESULTS_PATH = "optuna_pop_window_results.csv"
 STUDY_PATH = "optuna_pop_study.pkl"
 
 N_TRIALS = 100
-INITIAL_WINDOWS: list[int | None] = [30, 60, 90, 180, None]
-WINDOW_MIN_DAYS = 1
+INITIAL_WINDOWS: list[int] = [30, 60, 90, 180, 0]
+WINDOW_MIN_DAYS = 0
 WINDOW_MAX_DAYS = 365
 SEED = 42
 
@@ -173,13 +173,9 @@ def evaluate_ndcg20(predictions: pl.DataFrame, ground_truth: pl.DataFrame) -> fl
 
 
 def objective(trial: optuna.Trial, prepared: dict, ground_truth: pl.DataFrame) -> float:
-    use_all_time = trial.suggest_categorical("use_all_time", [False])
-    window = (
-        None
-        if use_all_time
-        else trial.suggest_int("window_days", WINDOW_MIN_DAYS, WINDOW_MAX_DAYS)
-    )
-    print(f"[trial {trial.number:03d}] iniciando: use_all_time={use_all_time} window={window}")
+    window = trial.suggest_int("window_days", WINDOW_MIN_DAYS, WINDOW_MAX_DAYS)
+    window = None if not window else window
+    print(f"[trial {trial.number:03d}] iniciando: window={window}")
 
     start = time.perf_counter()
     predictions = score_window(window, prepared)
@@ -226,10 +222,7 @@ if __name__ == "__main__":
     )
 
     for window in INITIAL_WINDOWS:
-        if window is None:
-            study.enqueue_trial({"use_all_time": True})
-        else:
-            study.enqueue_trial({"use_all_time": False, "window_days": window})
+        study.enqueue_trial({"window_days": window})
 
     print(f"Rodando {N_TRIALS} trials ({len(INITIAL_WINDOWS)} fixos + TPE)...")
     study.optimize(lambda trial: objective(trial, prepared, ground_truth), n_trials=N_TRIALS)
