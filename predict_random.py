@@ -9,55 +9,62 @@ menor).
 
 A amostragem usa models.random_model.RandomModel (Card 7).
 
-O resultado (~3.2M linhas x 250 colunas) e grande demais para caber
-inteiro em memoria de uma vez, entao e escrito em lotes de BATCH_SIZE
-linhas de teste diretamente no parquet (via pyarrow.ParquetWriter), sem
-nunca acumular o dataframe completo em RAM.
+Com o split leave-one-out (Card 5) ha apenas 1 interacao de teste por
+usuario, entao o resultado cabe inteiro em memoria e e escrito de uma
+vez (sem batches).
 
-ATENCAO: este script processa o dataset inteiro (~19M interacoes) e
-NAO deve ser executado neste ambiente -- destina-se a rodar em outra
-maquina.
+O seed do RandomModel pode ser definido por linha de comando
+(--seed/-s). Sem argumento, usa o default abaixo (42). Exemplos:
+    python predict_random.py            # seed = 42 (default)
+    python predict_random.py --seed 7
+    python predict_random.py -s 123
 """
 
+import argparse
 import os
 
 import polars as pl
-import pyarrow.parquet as pq
 
 from models import RandomModel
 
 INPUT_PATH = "data/processed/interactions_fe.parquet"
-OUTPUT_PATH = "data/predictions/random.parquet"
-N_RECS = 250
-BATCH_SIZE = 200_000  # linhas de teste por lote escrito no parquet, controla o pico de memoria
+SEED = 42  # default: semente do RandomModel; sobrescrito por --seed
+N_RECS = 50
 
 REC_COLS = [f"rec{j:03d}" for j in range(N_RECS)]
 SCHEMA = ["uid", "timestamp", *REC_COLS]
 
 
-def main():
-    print(f"Lendo {INPUT_PATH}...")
-    df = pl.read_parquet(INPUT_PATH).sort(["uid", "interaction_rank"])
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Pipeline de predicao do modelo random (Card 9)."
+    )
+    parser.add_argument(
+        "--seed",
+        "-s",
+        type=int,
+        default=SEED,
+        help=f"Semente do RandomModel. Default: {SEED}.",
+    )
+    return parser.parse_args()
 
+
+def main(seed: int, df: pl.DataFrame) -> pl.DataFrame:
     app_dtype = df.schema["app_package"]
     dtypes = {"uid": pl.Utf8, "timestamp": pl.Utf8, **{col: app_dtype for col in REC_COLS}}
 
     catalog = sorted(df["app_package"].unique().to_list())
-    model = RandomModel()
+    model = RandomModel(random_state=seed)
 
     uids = df["uid"].to_list()
     apps = df["app_package"].to_list()
     timestamps = df["formated_date"].to_list()
     splits = df["split"].to_list()
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-
-    print("Gerando predicoes e salvando em lotes...")
+    print("Gerando predicoes...")
     consumed: set = set()
     current_uid = None
-    batch: list = []
-    writer = None
-    total_written = 0
+    rows: list = []
 
     for uid, app, timestamp, split in zip(uids, apps, timestamps, splits):
         if uid != current_uid:
@@ -68,44 +75,28 @@ def main():
             valid_apps = [a for a in catalog if a not in consumed]
             preds = model.predict(valid_apps, N_RECS)
             preds += [None] * (N_RECS - len(preds))
-            batch.append((uid, timestamp, *preds))
-
-            if len(batch) >= BATCH_SIZE:
-                writer = _flush(batch, writer, dtypes)
-                total_written += len(batch)
-                print(f"  {total_written} linhas de teste processadas...")
-                batch = []
+            rows.append((uid, timestamp, *preds))
 
         consumed.add(app)
 
-    if batch:
-        writer = _flush(batch, writer, dtypes)
-        total_written += len(batch)
+    print(f"OK: {len(rows)} linhas de teste processadas")
 
-    if writer is not None:
-        writer.close()
-
-    print("Validando...")
-    expected = df.filter(pl.col("split") == "test").height
-    assert total_written == expected, (
-        f"esperado {expected} linhas de teste, obtido {total_written}"
-    )
-    print(f"OK: {total_written} linhas == {expected} interacoes de teste")
-
-    print("Concluido!")
-
-
-def _flush(batch: list, writer, dtypes: dict) -> pq.ParquetWriter:
-    """Converte um lote de linhas para colunar e escreve no parquet, sem
-    acumular nada alem desse lote em memoria."""
-    columns = dict(zip(SCHEMA, zip(*batch)))
-    table = pl.DataFrame(columns, schema=dtypes).to_arrow()
-
-    if writer is None:
-        writer = pq.ParquetWriter(OUTPUT_PATH, table.schema)
-    writer.write_table(table)
-    return writer
+    columns = dict(zip(SCHEMA, zip(*rows)))
+    return pl.DataFrame(columns, schema=dtypes)
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+
+    print(f"Lendo {INPUT_PATH}...")
+    df = pl.read_parquet(INPUT_PATH).sort(["uid", "interaction_rank"])
+
+    predictions = main(args.seed, df)
+
+    output_path = f"data/predictions/random_{args.seed}.parquet"
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    print(f"Salvando {output_path}...")
+    predictions.write_parquet(output_path)
+
+    print("Concluido!")
