@@ -1,12 +1,11 @@
 """Pipeline de predicao do modelo de popularidade (Card 8).
 
 Le o dataset de interacoes ja processado pelo feature engineering
-(feature_engineering.py), que ja contem `split`, e a popularity_matrix
-(Card 4). Para cada interacao de teste, gera um ranking por
-popularidade de N_RECS apps dentre os que o usuario ainda nao havia
-consumido -- excluindo todo o historico anterior a ela (treino e
-validacao; ver Card 5 para por que isso equivale a todo o resto do
-historico do usuario).
+(feature_engineering.py), que ja contem `interaction_rank` e `split`,
+e a popularity_matrix (Card 4). Para cada interacao de teste, gera um
+ranking por popularidade de N_RECS apps dentre os que o usuario ainda
+nao havia consumido -- excluindo todo o historico anterior a ela
+(treino, validacao e teste com timestamp menor).
 
 A logica de pontuacao (soma cumulativa dentro da janela) e a mesma do
 models.pop_model.POPModel (Card 8), mas roda inline em numpy em vez de
@@ -27,15 +26,6 @@ Aqui, em vez disso:
     lookups em dict por app;
   - o top-N e obtido com np.partition (custo O(catalogo), sem ordenar
     o catalogo inteiro) em vez de sorted() sobre todos os validos.
-
-Com o split leave-one-out (Card 5), a linha de teste de cada usuario e
-sempre a ultima cronologicamente -- entao o conjunto "ja consumido"
-naquela linha e simplesmente todo o resto do historico do usuario
-(train + val), sem precisar de nenhuma ordem cronologica particular
-para chega-lo. Por isso o calculo desse conjunto e feito de uma vez
-via `group_by("uid")` do polars (vetorizado) sobre as linhas de
-train/val, e o loop em Python roda apenas sobre as linhas de teste (1
-por usuario) -- nao mais sobre o dataset inteiro (~19M linhas).
 
 Desempate: itens com o mesmo score sao desempatados pela popularidade
 diaria (nao cumulativa) do dia imediatamente anterior a reference_date
@@ -184,24 +174,19 @@ def main(window: int | None, df: pl.DataFrame, matrix: pl.DataFrame) -> pl.DataF
     # (cast direto de Int64 pra Enum reinterpreta o int como codigo/posicao, nao
     # como valor) e para os ids de saida terem o mesmo tipo do ground truth.
     catalog_native = pl.Series(catalog, dtype=pl.Utf8).cast(app_dtype).to_list()
+    df = df.with_columns(pl.col("app_package").cast(pl.Utf8).cast(pl.Enum(catalog)))
     df = df.with_columns(
-        pl.col("app_package").cast(pl.Utf8).cast(pl.Enum(catalog)).to_physical().alias("code")
+        (pl.col("uid") != pl.col("uid").shift(1)).fill_null(True).alias("_new_user")
     )
 
-    print("Agregando apps consumidos por usuario (train+val)...")
-    consumed = (
-        df.filter(pl.col("split") != "test")
-        .group_by("uid")
-        .agg(pl.col("code").alias("consumed_codes"))
-    )
-    test_df = df.filter(pl.col("split") == "test").join(consumed, on="uid", how="left")
-
-    uids = test_df["uid"].to_list()
-    timestamps = test_df[DATE_COL].to_list()  # strings "YYYY-MM-DD", vao direto pro output
-    consumed_lists = test_df["consumed_codes"].to_list()  # None ou lista de codigos por usuario
+    codes = df["app_package"].to_physical().to_numpy()
+    is_new_user = df["_new_user"].to_numpy()
+    is_test = (df["split"] == "test").to_numpy()
+    uids = df["uid"].to_list()
+    timestamps = df[DATE_COL].to_list()  # strings "YYYY-MM-DD", vao direto pro output
 
     print("Pre-calculando indices de data (vetorizado)...")
-    test_dates = test_df[DATE_COL].str.to_date().to_numpy()
+    test_dates = df.filter(pl.col("split") == "test")[DATE_COL].str.to_date().to_numpy()
     idx_until_all = np.searchsorted(matrix_dates, test_dates, side="right") - 1
     if window is not None:
         window_start = test_dates - np.timedelta64(window, "D")
@@ -210,36 +195,40 @@ def main(window: int | None, df: pl.DataFrame, matrix: pl.DataFrame) -> pl.DataF
         idx_before_all = None
 
     zero_row = np.zeros(n_items, dtype=np.int64)
-    mask = np.zeros(n_items, dtype=bool)  # reutilizada: setada e desfeita a cada usuario
 
     print("Gerando predicoes...")
+    mask = bytearray(n_items)  # 1 = app ja consumido pelo usuario ate aqui
+    zero_template = bytes(n_items)
+    mask_view = np.frombuffer(mask, dtype=bool)
+
     rows: list = []
+    test_ptr = 0
+    n_rows = df.height
 
-    for i in range(test_df.height):
-        idx_until = idx_until_all[i]
-        row_until = matrix_values[idx_until] if idx_until >= 0 else zero_row
+    for i in range(n_rows):
+        if is_new_user[i]:
+            mask[:] = zero_template
 
-        if window is not None:
-            idx_before = idx_before_all[i]
-            row_before = matrix_values[idx_before] if idx_before >= 0 else zero_row
-            scores = row_until - row_before
-        else:
-            scores = row_until
+        if is_test[i]:
+            idx_until = idx_until_all[test_ptr]
+            row_until = matrix_values[idx_until] if idx_until >= 0 else zero_row
 
-        consumed_codes = consumed_lists[i]
-        if consumed_codes:
-            idx_arr = np.asarray(consumed_codes, dtype=np.int64)
-            mask[idx_arr] = True
+            if window is not None:
+                idx_before = idx_before_all[test_ptr]
+                row_before = matrix_values[idx_before] if idx_before >= 0 else zero_row
+                scores = row_until - row_before
+            else:
+                scores = row_until
 
-        candidate_idx = np.flatnonzero(~mask)
-        top_idx = _rank_top_n(candidate_idx, scores, matrix_values, idx_until, N_RECS)
+            candidate_idx = np.flatnonzero(~mask_view)
+            top_idx = _rank_top_n(candidate_idx, scores, matrix_values, idx_until, N_RECS)
 
-        if consumed_codes:
-            mask[idx_arr] = False
+            preds = [catalog_native[c] for c in top_idx]
+            preds += [None] * (N_RECS - len(preds))
+            rows.append((uids[i], timestamps[i], *preds))
+            test_ptr += 1
 
-        preds = [catalog_native[c] for c in top_idx]
-        preds += [None] * (N_RECS - len(preds))
-        rows.append((uids[i], timestamps[i], *preds))
+        mask[codes[i]] = 1
 
     print(f"OK: {len(rows)} linhas de teste processadas")
 
@@ -258,7 +247,7 @@ if __name__ == "__main__":
     matrix = matrix.sort(DATE_COL)
 
     print(f"Lendo {INTERACTIONS_PATH}...")
-    df = pl.read_parquet(INTERACTIONS_PATH)
+    df = pl.read_parquet(INTERACTIONS_PATH).sort(["uid", "interaction_rank"])
 
     predictions = main(args.window, df, matrix)
 

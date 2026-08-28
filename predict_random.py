@@ -1,22 +1,17 @@
 """Pipeline de predicao do modelo random (Card 9).
 
 Le o dataset de interacoes ja processado pelo feature engineering
-(feature_engineering.py), que ja contem `split`. Para cada interacao
-de teste, gera um ranking aleatorio de N_RECS apps dentre os que o
-usuario ainda nao havia consumido -- excluindo todo o historico
-anterior a ela (treino e validacao).
+(feature_engineering.py), que ja contem `interaction_rank` e `split`.
+Para cada interacao de teste, gera um ranking aleatorio de N_RECS apps
+dentre os que o usuario ainda nao havia consumido -- excluindo todo o
+historico anterior a ela (treino, validacao e teste com timestamp
+menor).
 
 A amostragem usa models.random_model.RandomModel (Card 7).
 
-Com o split leave-one-out (Card 5), a linha de teste de cada usuario e
-sempre a ultima cronologicamente -- entao o conjunto "ja consumido"
-naquela linha e simplesmente todo o resto do historico do usuario
-(train + val). Por isso esse conjunto e calculado de uma vez via
-`group_by("uid")` do polars (vetorizado), e o loop em Python roda
-apenas sobre as linhas de teste (1 por usuario) -- nao mais sobre o
-dataset inteiro. Como ha apenas 1 interacao de teste por usuario, o
-resultado tambem cabe inteiro em memoria e e escrito de uma vez (sem
-batches).
+Com o split leave-one-out (Card 5) ha apenas 1 interacao de teste por
+usuario, entao o resultado cabe inteiro em memoria e e escrito de uma
+vez (sem batches).
 
 O seed do RandomModel pode ser definido por linha de comando
 (--seed/-s). Sem argumento, usa o default abaixo (42). Exemplos:
@@ -61,27 +56,28 @@ def main(seed: int, df: pl.DataFrame) -> pl.DataFrame:
     catalog = sorted(df["app_package"].unique().to_list())
     model = RandomModel(random_state=seed)
 
-    print("Agregando apps consumidos por usuario (train+val)...")
-    consumed = (
-        df.filter(pl.col("split") != "test")
-        .group_by("uid")
-        .agg(pl.col("app_package").alias("consumed_apps"))
-    )
-    test_df = df.filter(pl.col("split") == "test").join(consumed, on="uid", how="left")
-
-    uids = test_df["uid"].to_list()
-    timestamps = test_df["formated_date"].to_list()
-    consumed_lists = test_df["consumed_apps"].to_list()  # None ou lista de apps por usuario
+    uids = df["uid"].to_list()
+    apps = df["app_package"].to_list()
+    timestamps = df["formated_date"].to_list()
+    splits = df["split"].to_list()
 
     print("Gerando predicoes...")
+    consumed: set = set()
+    current_uid = None
     rows: list = []
 
-    for uid, timestamp, consumed_apps in zip(uids, timestamps, consumed_lists):
-        consumed_set = set(consumed_apps) if consumed_apps else set()
-        valid_apps = [a for a in catalog if a not in consumed_set]
-        preds = model.predict(valid_apps, N_RECS)
-        preds += [None] * (N_RECS - len(preds))
-        rows.append((uid, timestamp, *preds))
+    for uid, app, timestamp, split in zip(uids, apps, timestamps, splits):
+        if uid != current_uid:
+            consumed = set()
+            current_uid = uid
+
+        if split == "test":
+            valid_apps = [a for a in catalog if a not in consumed]
+            preds = model.predict(valid_apps, N_RECS)
+            preds += [None] * (N_RECS - len(preds))
+            rows.append((uid, timestamp, *preds))
+
+        consumed.add(app)
 
     print(f"OK: {len(rows)} linhas de teste processadas")
 
@@ -93,7 +89,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     print(f"Lendo {INPUT_PATH}...")
-    df = pl.read_parquet(INPUT_PATH)
+    df = pl.read_parquet(INPUT_PATH).sort(["uid", "interaction_rank"])
 
     predictions = main(args.seed, df)
 
