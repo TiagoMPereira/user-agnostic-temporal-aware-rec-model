@@ -8,7 +8,7 @@ from .interaction_metrics import (
     mrr_expr,
     all_metric_exprs,
 )
-from .evaluation import compute_rank, aggregate_per_user, compute_summary
+from .evaluation import compute_rank, compute_summary
 from .excel_export import save_to_excel
 
 __all__ = [
@@ -23,7 +23,6 @@ __all__ = [
     "mrr_expr",
     "all_metric_exprs",
     "compute_rank",
-    "aggregate_per_user",
     "compute_summary",
     "save_to_excel",
 ]
