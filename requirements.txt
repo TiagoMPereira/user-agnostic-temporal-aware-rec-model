@@ -5,3 +5,4 @@ polars
 pyarrow
 sentence-transformers
 openpyxl
+optuna
