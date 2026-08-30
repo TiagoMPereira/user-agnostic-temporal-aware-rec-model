@@ -63,9 +63,10 @@ from metrics.interaction_metrics import ndcg_at_k
 from metrics.rank import compute_rank_expr
 from models.pop_utils import _rank_top_n
 
+SEED = 42
 GROUND_TRUTH_PATH = "data/predictions/test_ground_truth.parquet"
-RESULTS_PATH = "data/optuna/recentpop/optuna_pop_window_results.csv"
-STUDY_PATH = "data/optuna/recentpop/optuna_pop_study.pkl"
+RESULTS_PATH = f"data/optuna/recentpop/{SEED}/optuna_pop_window_results.csv"
+STUDY_PATH = f"data/optuna/recentpop/{SEED}/optuna_pop_study.pkl"
 POPULARITY_MATRIX_PATH = "data/processed/popularity_matrix.parquet"
 INTERACTIONS_PATH = "data/processed/interactions_fe.parquet"
 DATE_COL = "formated_date"
@@ -75,7 +76,6 @@ N_TRIALS = 100
 INITIAL_WINDOWS: list[int] = [0, 1, 30, 60, 90, 180, 365]
 WINDOW_MIN_DAYS = 0
 WINDOW_MAX_DAYS = 365
-SEED = 42
 
 REC_COLS = [f"rec{j:03d}" for j in range(N_RECS)]
 SCHEMA = ["uid", "timestamp", *REC_COLS]
