@@ -64,8 +64,8 @@ from metrics.rank import compute_rank_expr
 from models.pop_utils import _rank_top_n
 
 GROUND_TRUTH_PATH = "data/predictions/test_ground_truth.parquet"
-RESULTS_PATH = "optuna_pop_window_results.csv"
-STUDY_PATH = "optuna_pop_study.pkl"
+RESULTS_PATH = "data/optuna/recentpop/optuna_pop_window_results.csv"
+STUDY_PATH = "data/optuna/recentpop/optuna_pop_study.pkl"
 POPULARITY_MATRIX_PATH = "data/processed/popularity_matrix.parquet"
 INTERACTIONS_PATH = "data/processed/interactions_fe.parquet"
 DATE_COL = "formated_date"
