@@ -54,6 +54,8 @@ import os
 import numpy as np
 import polars as pl
 
+from models.pop_utils import _rank_top_n
+
 WINDOW = 90  # default: tamanho da janela em dias (None = POP-All, 90/180/365 = POP-3/6/12); sobrescrito por --window
 
 INTERACTIONS_PATH = "data/processed/interactions_fe.parquet"
@@ -86,81 +88,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
-
-
-def _break_ties(items: np.ndarray, matrix_values: np.ndarray, idx_until: int) -> np.ndarray:
-    """Desempata `items` (codigos de app com o mesmo score), regressivamente,
-    pela popularidade diaria dos dias anteriores a reference_date.
-
-    Tier 1 compara a contagem diaria do dia em matrix[idx_until - 1]
-    (o dia imediatamente anterior a reference_date); se persistir o
-    empate, tier 2 compara o dia anterior a esse, e assim por diante.
-    Ao esgotar o historico da matrix, o empate remanescente e resolvido
-    pelo codigo do item -- que corresponde a ordem alfabetica do
-    catalogo (ja ordenado, ver Card 4).
-    """
-    groups = [items]
-    tier = 1
-
-    while any(g.size > 1 for g in groups):
-        lo = idx_until - tier
-        new_groups = []
-
-        for g in groups:
-            if g.size <= 1:
-                new_groups.append(g)
-                continue
-
-            if lo < 0:
-                # historico esgotado: cada item vira seu proprio grupo, na
-                # ordem do codigo (== ordem alfabetica do catalogo, Card 4)
-                new_groups.extend(np.split(np.sort(g), np.arange(1, g.size)))
-                continue
-
-            daily = matrix_values[lo + 1, g] - matrix_values[lo, g]
-            order = np.argsort(-daily, kind="stable")
-            g_sorted = g[order]
-            daily_sorted = daily[order]
-            boundaries = np.flatnonzero(np.diff(daily_sorted) != 0) + 1
-            new_groups.extend(np.split(g_sorted, boundaries))
-
-        groups = new_groups
-        tier += 1
-
-    return np.concatenate(groups)
-
-
-def _rank_top_n(
-    candidate_idx: np.ndarray,
-    scores: np.ndarray,
-    matrix_values: np.ndarray,
-    idx_until: int,
-    n: int,
-) -> np.ndarray:
-    """Retorna ate `n` codigos de `candidate_idx`, do mais para o menos
-    relevante, ordenados por score (descendente) com desempate
-    regressivo por popularidade diaria (ver `_break_ties`).
-    """
-    candidate_scores = scores[candidate_idx]
-
-    if candidate_idx.size > n:
-        threshold = np.partition(candidate_scores, -n)[-n]
-        keep = candidate_scores >= threshold
-        candidate_idx = candidate_idx[keep]
-        candidate_scores = candidate_scores[keep]
-
-    order = np.argsort(-candidate_scores, kind="stable")
-    sorted_idx = candidate_idx[order]
-    sorted_scores = candidate_scores[order]
-
-    boundaries = np.flatnonzero(np.diff(sorted_scores) != 0) + 1
-    groups = np.split(sorted_idx, boundaries)
-
-    resolved = [
-        _break_ties(g, matrix_values, idx_until) if g.size > 1 else g for g in groups
-    ]
-    return np.concatenate(resolved)[:n]
-
 
 def main(window: int | None, df: pl.DataFrame, matrix: pl.DataFrame) -> pl.DataFrame:
     catalog = [c for c in matrix.columns if c != DATE_COL]  # ja ordenado (Card 4), nomes de coluna sao sempre str

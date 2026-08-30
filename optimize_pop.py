@@ -28,22 +28,31 @@ trial:
      linha de teste -- reaproveitando tudo que `prepare()` ja calculou.
 
 Busca:
-  - Hiperparametro: `window` (dias) ou None (POP-All). Modelado como
-    dois parametros Optuna -- `use_all_time` (categorico) decide entre
-    POP-All e uma janela; se for janela, `window_days` (int) escolhe o
-    tamanho.
+  - Hiperparametro: `window_days` (int, 0 a WINDOW_MAX_DAYS), onde 0
+    representa POP-All (window=None) -- um unico parametro inteiro em
+    vez de dois, o que evita conflito entre valores fixados via
+    `enqueue_trial` e o dominio declarado em `suggest_int`.
   - Metrica: NDCG@20 medio no split de teste (mean direto sobre as
     interacoes de teste -- Card 10: leave-one-out elimina a
     necessidade de agregar por usuario antes).
-  - 5 trials iniciais fixos (via `study.enqueue_trial`): window em
-    {30, 60, 90, 180, None}.
-  - 95 trials adicionais via TPESampler (total: 100).
+  - 5 trials iniciais fixos (via `study.enqueue_trial`): window_days em
+    {30, 60, 90, 180, 0}.
+  - 95 trials adicionais via `UniqueIntTPESampler` (total: 100) --
+    subclasse de TPESampler que reamostra ate obter um `window_days`
+    ainda nao testado nesta study, evitando trials duplicados sem
+    trocar o TPE por um GridSampler.
+
+Itens com popularidade 0 no criterio usado nunca sao recomendados
+(fica None na posicao em vez de um item sem nenhum sinal de
+popularidade) -- regra aplicada em `models/pop_utils._rank_top_n`,
+compartilhada com predict_pop.py.
 
 Uso:
     python optimize_pop.py
 """
 
 import pickle
+import random
 import time
 
 import numpy as np
@@ -52,20 +61,65 @@ import polars as pl
 
 from metrics.interaction_metrics import ndcg_at_k
 from metrics.rank import compute_rank_expr
-from predict_pop import DATE_COL, INTERACTIONS_PATH, N_RECS, POPULARITY_MATRIX_PATH, _rank_top_n
+from models.pop_utils import _rank_top_n
 
 GROUND_TRUTH_PATH = "data/predictions/test_ground_truth.parquet"
 RESULTS_PATH = "optuna_pop_window_results.csv"
 STUDY_PATH = "optuna_pop_study.pkl"
+POPULARITY_MATRIX_PATH = "data/processed/popularity_matrix.parquet"
+INTERACTIONS_PATH = "data/processed/interactions_fe.parquet"
+DATE_COL = "formated_date"
 
+N_RECS = 50
 N_TRIALS = 100
-INITIAL_WINDOWS: list[int] = [30, 60, 90, 180, 0]
+INITIAL_WINDOWS: list[int] = [0, 1, 30, 60, 90, 180, 365]
 WINDOW_MIN_DAYS = 0
 WINDOW_MAX_DAYS = 365
 SEED = 42
 
 REC_COLS = [f"rec{j:03d}" for j in range(N_RECS)]
 SCHEMA = ["uid", "timestamp", *REC_COLS]
+
+MAX_RESAMPLE_ATTEMPTS = 100  # tentativas de reamostrar window_days antes de cair no fallback
+
+
+class UniqueIntTPESampler(optuna.samplers.TPESampler):
+    """TPESampler que reamostra `window_days` ate obter um valor ainda
+    nao testado nesta study, evitando trials duplicados sem abrir mao
+    da busca guiada do TPE (ao contrario do GridSampler, que apenas
+    enumera exaustivamente o espaco de busca).
+
+    Os 5 trials iniciais fixos (`study.enqueue_trial`) nao passam por
+    aqui -- valores fixados pulam o sampler. So os trials orientados
+    por TPE sao filtrados.
+    """
+
+    def sample_independent(self, study, trial, param_name, param_distribution):
+        value = super().sample_independent(study, trial, param_name, param_distribution)
+
+        if param_name != "window_days":
+            return value
+
+        tried = {
+            t.params["window_days"]
+            for t in study.get_trials(deepcopy=False)
+            if t.number != trial.number and "window_days" in t.params
+        }
+
+        attempts = 0
+        while value in tried and attempts < MAX_RESAMPLE_ATTEMPTS:
+            value = super().sample_independent(study, trial, param_name, param_distribution)
+            attempts += 1
+
+        if value in tried:
+            # espaco de busca praticamente esgotado: sorteia uniformemente
+            # entre os valores inteiros do intervalo ainda nao testados
+            low, high = int(param_distribution.low), int(param_distribution.high)
+            untried = [v for v in range(low, high + 1) if v not in tried]
+            if untried:
+                value = random.choice(untried)
+
+        return value
 
 
 def prepare(df: pl.DataFrame, matrix: pl.DataFrame) -> dict:
@@ -218,7 +272,7 @@ if __name__ == "__main__":
 
     study = optuna.create_study(
         direction="maximize",
-        sampler=optuna.samplers.TPESampler(seed=SEED),
+        sampler=UniqueIntTPESampler(seed=SEED),
     )
 
     for window in INITIAL_WINDOWS:
