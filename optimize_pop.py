@@ -1,7 +1,18 @@
 """Otimizacao do hiperparametro `window` do POPModel via Optuna (Card 8).
 
 Busca o valor de `window` (dias, ou None para POP-All) que maximiza o
-NDCG@20 no split de teste, usando Optuna com o sampler TPE.
+NDCG@20 no split de VALIDACAO (val), usando Optuna com o sampler TPE.
+O split de teste NAO e usado em nenhum momento aqui -- nem para gerar
+predicoes, nem para calcular ground truth. Isso evita que a escolha do
+hiperparametro seja contaminada pelos dados que serao usados para
+reportar a metrica final.
+
+Fluxo completo (dois scripts separados):
+  1. `optimize_pop.py` (este arquivo): treino -> prediz validacao,
+     escolhe o melhor `window` por NDCG@20 no val.
+  2. `predict_pop.py --window <melhor>` + `evaluate_predictions.py`:
+     roda a predicao de fato sobre o split de teste (unica vez, com o
+     window ja escolhido) para obter a metrica real reportada.
 
 Nao sobrescreve predict_pop.py -- reaproveita sua funcao de
 ranking/desempate (`_rank_top_n`, mesma logica e mesmo desempate
@@ -12,29 +23,31 @@ trial:
 
   1. `prepare()`: roda uma unica vez. Faz tudo que NAO depende de
      `window` -- carrega a popularity_matrix, codifica o catalogo, e
-     agrega os apps consumidos (train+val) por usuario via
+     agrega os apps consumidos (somente TREINO) por usuario via
      `group_by("uid")` (vetorizado no polars). Isso e valido porque,
-     com o split leave-one-out (Card 5), a linha de teste de cada
-     usuario e sempre a ultima cronologicamente, entao "ja consumido"
-     ali e simplesmente todo o resto do historico do usuario. Tambem
-     pre-calcula, via busca binaria vetorizada, o indice de linha da
-     matrix correspondente a reference_date de cada linha de teste
-     (`idx_until`, que tampouco depende de `window`).
+     com o split leave-one-out (Card 5), a linha de val de cada
+     usuario e sempre a penultima cronologicamente (a ultima e o
+     teste, que fica de fora), entao "ja consumido" ali e todo o
+     historico de treino do usuario. Tambem pre-calcula, via busca
+     binaria vetorizada, o indice de linha da matrix correspondente a
+     reference_date de cada linha de val (`idx_until`, que tampouco
+     depende de `window`), e extrai o ground truth de val (uid,
+     app_package, timestamp) direto do dataframe ja carregado.
 
   2. `score_window(window, prepared)`: roda 1x por trial. So recalcula
      o que de fato depende de `window` -- o indice de inicio da janela
      (`idx_before`, busca binaria vetorizada sobre um array do tamanho
      do numero de usuarios, nao do dataset inteiro) e o score de cada
-     linha de teste -- reaproveitando tudo que `prepare()` ja calculou.
+     linha de val -- reaproveitando tudo que `prepare()` ja calculou.
 
 Busca:
   - Hiperparametro: `window_days` (int, 0 a WINDOW_MAX_DAYS), onde 0
     representa POP-All (window=None) -- um unico parametro inteiro em
     vez de dois, o que evita conflito entre valores fixados via
     `enqueue_trial` e o dominio declarado em `suggest_int`.
-  - Metrica: NDCG@20 medio no split de teste (mean direto sobre as
-    interacoes de teste -- Card 10: leave-one-out elimina a
-    necessidade de agregar por usuario antes).
+  - Metrica: NDCG@20 medio no split de validacao (mean direto sobre as
+    interacoes de val -- Card 10: leave-one-out elimina a necessidade
+    de agregar por usuario antes).
   - 5 trials iniciais fixos (via `study.enqueue_trial`): window_days em
     {30, 60, 90, 180, 0}.
   - 95 trials adicionais via `UniqueIntTPESampler` (total: 100) --
@@ -49,6 +62,8 @@ compartilhada com predict_pop.py.
 
 Uso:
     python optimize_pop.py
+    python predict_pop.py --window <melhor_window_encontrado>
+    python evaluate_predictions.py
 """
 
 import pickle
@@ -64,7 +79,6 @@ from metrics.rank import compute_rank_expr
 from models.pop_utils import _rank_top_n
 
 SEED = 42
-GROUND_TRUTH_PATH = "data/predictions/test_ground_truth.parquet"
 RESULTS_PATH = f"data/optuna/recentpop/{SEED}/optuna_pop_window_results.csv"
 STUDY_PATH = f"data/optuna/recentpop/{SEED}/optuna_pop_study.pkl"
 POPULARITY_MATRIX_PATH = "data/processed/popularity_matrix.parquet"
@@ -135,17 +149,24 @@ def prepare(df: pl.DataFrame, matrix: pl.DataFrame) -> dict:
         pl.col("app_package").cast(pl.Utf8).cast(pl.Enum(catalog)).to_physical().alias("code")
     )
 
-    print("Agregando apps consumidos por usuario (train+val)...")
+    print("Agregando apps consumidos por usuario (somente treino)...")
     consumed = (
-        df.filter(pl.col("split") != "test")
+        df.filter(pl.col("split") == "train")
         .group_by("uid")
         .agg(pl.col("code").alias("consumed_codes"))
     )
-    test_df = df.filter(pl.col("split") == "test").join(consumed, on="uid", how="left")
+    val_df = df.filter(pl.col("split") == "val").join(consumed, on="uid", how="left")
+
+    print("Extraindo ground truth de validacao...")
+    ground_truth = val_df.select(
+        pl.col("uid"),
+        pl.col("app_package"),
+        pl.col(DATE_COL).alias("timestamp"),
+    )
 
     print("Pre-calculando indices de data (vetorizado)...")
-    test_dates = test_df[DATE_COL].str.to_date().to_numpy()
-    idx_until_all = np.searchsorted(matrix_dates, test_dates, side="right") - 1
+    val_dates = val_df[DATE_COL].str.to_date().to_numpy()
+    idx_until_all = np.searchsorted(matrix_dates, val_dates, side="right") - 1
 
     return {
         "n_items": n_items,
@@ -153,11 +174,12 @@ def prepare(df: pl.DataFrame, matrix: pl.DataFrame) -> dict:
         "matrix_values": matrix_values,
         "catalog_native": catalog_native,
         "app_dtype": app_dtype,
-        "uids": test_df["uid"].to_list(),
-        "timestamps": test_df[DATE_COL].to_list(),
-        "consumed_lists": test_df["consumed_codes"].to_list(),
-        "test_dates": test_dates,
+        "uids": val_df["uid"].to_list(),
+        "timestamps": val_df[DATE_COL].to_list(),
+        "consumed_lists": val_df["consumed_codes"].to_list(),
+        "val_dates": val_dates,
         "idx_until_all": idx_until_all,
+        "ground_truth": ground_truth,
     }
 
 
@@ -168,7 +190,7 @@ def score_window(window: int | None, prepared: dict) -> pl.DataFrame:
     matrix_values = prepared["matrix_values"]
     matrix_dates = prepared["matrix_dates"]
     idx_until_all = prepared["idx_until_all"]
-    test_dates = prepared["test_dates"]
+    val_dates = prepared["val_dates"]
     n_items = prepared["n_items"]
     catalog_native = prepared["catalog_native"]
     uids = prepared["uids"]
@@ -176,7 +198,7 @@ def score_window(window: int | None, prepared: dict) -> pl.DataFrame:
     consumed_lists = prepared["consumed_lists"]
 
     if window is not None:
-        window_start = test_dates - np.timedelta64(window, "D")
+        window_start = val_dates - np.timedelta64(window, "D")
         idx_before_all = np.searchsorted(matrix_dates, window_start, side="right") - 1
     else:
         idx_before_all = None
@@ -217,9 +239,9 @@ def score_window(window: int | None, prepared: dict) -> pl.DataFrame:
 
 
 def evaluate_ndcg20(predictions: pl.DataFrame, ground_truth: pl.DataFrame) -> float:
-    """NDCG@20 medio no split de teste (Card 10 -- mean direto sobre as
-    interacoes, sem estagio de agregacao por usuario: o split
-    leave-one-out ja garante 1 linha de teste por uid)."""
+    """NDCG@20 medio no split de validacao (Card 10 -- mean direto sobre
+    as interacoes, sem estagio de agregacao por usuario: o split
+    leave-one-out ja garante 1 linha de val por uid)."""
     joined = ground_truth.lazy().join(predictions.lazy(), on=["uid", "timestamp"], how="inner")
     with_rank = joined.with_columns(compute_rank_expr(n_recs=N_RECS))
     with_ndcg = with_rank.with_columns(ndcg_at_k(20))
@@ -264,11 +286,9 @@ if __name__ == "__main__":
     print(f"Lendo {INTERACTIONS_PATH}...")
     df = pl.read_parquet(INTERACTIONS_PATH)
 
-    print(f"Lendo {GROUND_TRUTH_PATH}...")
-    ground_truth = pl.read_parquet(GROUND_TRUTH_PATH)
-
     prepared = prepare(df, matrix)
-    del df  # libera as ~19M linhas; so os arrays de teste em `prepared` sao necessarios daqui pra frente
+    del df  # libera as ~19M linhas; so os arrays de val em `prepared` sao necessarios daqui pra frente
+    ground_truth = prepared.pop("ground_truth")
 
     study = optuna.create_study(
         direction="maximize",
