@@ -138,7 +138,17 @@ class UniqueIntTPESampler(optuna.samplers.TPESampler):
 
 def prepare(df: pl.DataFrame, matrix: pl.DataFrame) -> dict:
     """Faz, uma unica vez, tudo que NAO depende de `window`."""
+    assert matrix[DATE_COL].is_sorted(), (
+        "matrix precisa estar ordenada por data ascendente -- o np.searchsorted "
+        "usado abaixo para localizar idx_until/idx_before so e valido nesse caso"
+    )
+
     catalog = [c for c in matrix.columns if c != DATE_COL]  # ja ordenado (Card 4)
+    assert list(matrix.drop(DATE_COL).columns) == catalog, (
+        "ordem das colunas de matrix diverge de catalog -- os codigos de item "
+        "gerados via pl.Enum(catalog) deixariam de corresponder as colunas de "
+        "matrix_values indexadas por esses mesmos codigos"
+    )
     n_items = len(catalog)
     matrix_dates = matrix[DATE_COL].to_numpy()  # datetime64[D], ascendente
     matrix_values = matrix.drop(DATE_COL).to_numpy().astype(np.int64)  # (n_datas, n_items)

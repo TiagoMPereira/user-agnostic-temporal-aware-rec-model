@@ -107,7 +107,18 @@ def prepare(df: pl.DataFrame, raw_df: pl.DataFrame) -> dict:
     daily_counts = pivot_daily_counts(raw_df).sort(DATE_COL)
     if daily_counts.schema[DATE_COL] != pl.Date:
         daily_counts = daily_counts.with_columns(pl.col(DATE_COL).str.to_date())
+    assert daily_counts[DATE_COL].is_sorted(), (
+        "daily_counts precisa estar ordenado por data ascendente -- tanto o "
+        "np.searchsorted abaixo quanto a recorrencia em decay_from_daily_counts "
+        "assumem isso"
+    )
+
     catalog = [c for c in daily_counts.columns if c != DATE_COL]  # ja ordenado
+    assert list(daily_counts.drop(DATE_COL).columns) == catalog, (
+        "ordem das colunas de daily_counts diverge de catalog -- os codigos de "
+        "item gerados via pl.Enum(catalog) deixariam de corresponder as colunas "
+        "de matrix_values indexadas por esses mesmos codigos em score_lambda"
+    )
     matrix_dates = daily_counts[DATE_COL].to_numpy()  # datetime64[D], ascendente
 
     app_dtype = df.schema["app_package"]
