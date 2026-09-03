@@ -129,8 +129,8 @@ DATE_COL = "formated_date"
 
 N_RECS = 50
 N_TRIALS = 150
-INITIAL_WINDOWS: list[int] = [0, 1, 30, 60, 90, 180, 365]
-INITIAL_LAMBDAS: list[float] = [0.001, 0.01, 0.1, 1.0]
+INITIAL_WINDOWS: list[int] = [0, 1, 365]
+INITIAL_LAMBDAS: list[float] = [0.001, 1.0]
 WINDOW_MIN_DAYS = 0
 WINDOW_MAX_DAYS = 365
 LAMBDA_MIN = 0.001
