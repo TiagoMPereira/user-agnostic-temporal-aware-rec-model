@@ -79,6 +79,14 @@ class PreparedContext:
     ref_dates: np.ndarray
     idx_until: np.ndarray
     ground_truth: pl.DataFrame
+    # Cache da matriz construida por strategy.build_matrix, por (decay,
+    # decay_params) -- a matriz NAO depende de `window` (so o corte de
+    # janela depende), entao uma busca que varia so `window` com `decay`
+    # fixo (ex.: --decay none --window auto, ou qualquer --decay com
+    # lambda_ fixo) reconstruia a MESMA matriz do zero a cada trial sem
+    # isso. Vive no ctx (nao no pipeline) para ser descartado junto com
+    # ele -- um novo prepare() comeca com cache vazio.
+    _matrix_cache: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 def _to_date_series(df: pl.DataFrame, date_col: str) -> pl.Series:
@@ -160,9 +168,7 @@ class PopularityPipeline:
         tudo que `prepare()` ja calculou. Mesma logica de ranking/desempate
         de todos os scripts antigos (`_rank_top_n`, models/pop_utils.py)."""
         strategy = config.strategy
-
-        matrix = strategy.build_matrix(ctx.daily_counts, ctx.date_col, **config.decay_params)
-        matrix_values = matrix.drop(ctx.date_col).to_numpy().astype(np.float64)
+        matrix_values = self._build_matrix_cached(strategy, config, ctx)
 
         idx_before = None
         if config.window is not None:
@@ -185,6 +191,26 @@ class PopularityPipeline:
         predicoes finais fora do laco do Optuna."""
         ctx = self.prepare(df, raw_df, split="test")
         return self.score(config, ctx)
+
+    def _build_matrix_cached(
+        self, strategy: DecayStrategy, config: PopularityConfig, ctx: PreparedContext
+    ) -> np.ndarray:
+        """`build_matrix` depende so de (decay, decay_params) -- nao de
+        `window`. Sem cache, uma busca que fixa `decay` (ex.: --decay none,
+        onde decay_params e sempre {}) e varia so `window` reconstruiria a
+        MESMA matriz a cada trial do Optuna, o custo dominante do laco de
+        otimizacao. A chave inclui `config.decay` (nao so os params) para
+        nao colidir entre estrategias diferentes que por acaso tenham os
+        mesmos nomes de hiperparametro."""
+        cache_key = (config.decay, tuple(sorted(config.decay_params.items())))
+        cached = ctx._matrix_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        matrix = strategy.build_matrix(ctx.daily_counts, ctx.date_col, **config.decay_params)
+        matrix_values = matrix.drop(ctx.date_col).to_numpy().astype(np.float64)
+        ctx._matrix_cache[cache_key] = matrix_values
+        return matrix_values
 
     def _rank_and_format(
         self,

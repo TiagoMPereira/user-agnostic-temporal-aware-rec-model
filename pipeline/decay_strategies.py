@@ -135,10 +135,15 @@ class NoDecayStrategy(DecayStrategy):
 
     def build_matrix(self, daily_counts: pl.DataFrame, date_col: str, **params) -> pl.DataFrame:
         item_cols = [c for c in daily_counts.columns if c != date_col]
-        exclusive = daily_counts.select(
-            [pl.col(c).cum_sum().shift(1).fill_null(0) for c in item_cols]
-        )
-        return exclusive.insert_column(0, daily_counts[date_col])
+        # numpy, nao uma expressao pl.col(...).cum_sum() por coluna: com o
+        # catalogo real (~10 mil itens), 10 mil expressoes individuais no
+        # plano de execucao do polars sao muito mais lentas do que um unico
+        # np.cumsum vetorizado sobre a matriz densa inteira.
+        values = daily_counts.select(item_cols).to_numpy()
+        exclusive = np.zeros_like(values)
+        exclusive[1:] = np.cumsum(values[:-1], axis=0)
+        result = pl.DataFrame(exclusive, schema=item_cols)
+        return result.insert_column(0, daily_counts[date_col])
 
     def windowed_scores(
         self,
