@@ -1,3 +1,71 @@
+[W 2026-09-23 23:16:06,173] Trial 0 failed with parameters: {'window_days': 0} because of the following error: ComputeError('cannot compare string with numeric type (i64)\n\nThis error occurred in the following expression:\n\t[(col("app_package")) == (col("rec000"))]\nwhile evaluating this larger expression:\n\t.when([(col("app_package")) == (col("rec000"))]).then(1).otherwise(21).min_horizontal([.when([(col("app_package")) == (col("rec001"))]).then(2).otherwise(21), .when([(col("app_package")) == (col("rec002"))]).then(3).otherwise(21), .when([(col("app_package")) == (col("rec003"))]).then(4).otherwise(21), .when([(col("app_package")) == (col("rec004"))]).then(5).otherwise(21), .when([(col("app_package")) == (col("rec005"))]).then(6).otherwise(21), .when([(col("app_package")) == (col("rec006"))]).then(7).otherwise(21), .when([(col("app_package")) == (col("rec007"))]).then(8).otherwise(21), .when([(col("app_package")) == (col("rec008"))]).then(9).otherwise(21), .when([(col("app_package")) == (col("rec009"))]).then(10).otherwise(21), .when([(col("app_package")) == (col("rec010"))]).then(11).otherwise(21), .when([(col("app_package")) == (col("rec011"))]).then(12).otherwise(21), .when([(col("app_package")) == (col("rec012"))]).then(13).otherwise(21), .when([(col("app_package")) == (col("rec013"))]).then(14).otherwise(21), .when([(col("app_package")) == (col("rec014"))]).then(15).otherwise(21), .when([(col("app_package")) == (col("rec015"))]).then(16).otherwise(21), .when([(col("app_package")) == (col("rec016"))]).then(17).otherwise(21), .when([(col("app_package")) == (col("rec017"))]).then(18).otherwise(21), .when([(col("app_package")) == (col("rec018"))]).then(19).otherwise(21), .when([(col("app_package")) == (col("rec019"))]).then(20).otherwise(21)])\n').
+Traceback (most recent call last):
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\optuna\study\_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\optimize_pop_matrix.py", line 90, in objective
+    value = evaluate(predictions, ground_truth, metric=METRIC, n_recs=N_RECS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\pipeline\metric_registry.py", line 59, in evaluate
+    return with_metric.select(pl.col("_metric_value").mean()).collect().item()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\polars\_utils\deprecation.py", line 97, in wrapper
+    return function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\polars\lazyframe\opt_flags.py", line 361, in wrapper
+    return function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\polars\lazyframe\frame.py", line 2591, in collect
+    return engine_.collect(
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\polars\lazyframe\engine.py", line 443, in collect
+    return wrap_df(ldf.collect(self.name, callback))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+polars.exceptions.ComputeError: cannot compare string with numeric type (i64)
+
+This error occurred in the following expression:
+        [(col("app_package")) == (col("rec000"))]
+while evaluating this larger expression:
+        .when([(col("app_package")) == (col("rec000"))]).then(1).otherwise(21).min_horizontal([.when([(col("app_package")) == (col("rec001"))]).then(2).otherwise(21), .when([(col("app_package")) == (col("rec002"))]).then(3).otherwise(21), .when([(col("app_package")) == (col("rec003"))]).then(4).otherwise(21), .when([(col("app_package")) == (col("rec004"))]).then(5).otherwise(21), .when([(col("app_package")) == (col("rec005"))]).then(6).otherwise(21), .when([(col("app_package")) == (col("rec006"))]).then(7).otherwise(21), .when([(col("app_package")) == (col("rec007"))]).then(8).otherwise(21), .when([(col("app_package")) == (col("rec008"))]).then(9).otherwise(21), .when([(col("app_package")) == (col("rec009"))]).then(10).otherwise(21), .when([(col("app_package")) == (col("rec010"))]).then(11).otherwise(21), .when([(col("app_package")) == (col("rec011"))]).then(12).otherwise(21), .when([(col("app_package")) == (col("rec012"))]).then(13).otherwise(21), .when([(col("app_package")) == (col("rec013"))]).then(14).otherwise(21), .when([(col("app_package")) == (col("rec014"))]).then(15).otherwise(21), .when([(col("app_package")) == (col("rec015"))]).then(16).otherwise(21), .when([(col("app_package")) == (col("rec016"))]).then(17).otherwise(21), .when([(col("app_package")) == (col("rec017"))]).then(18).otherwise(21), .when([(col("app_package")) == (col("rec018"))]).then(19).otherwise(21), .when([(col("app_package")) == (col("rec019"))]).then(20).otherwise(21)])
+
+[W 2026-09-23 23:16:06,195] Trial 0 failed with value None.
+Traceback (most recent call last):
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\optimize_pop_matrix.py", line 155, in <module>
+    main()
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\optimize_pop_matrix.py", line 120, in main
+    study.optimize(objective, n_trials=args.n_trials)
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\optuna\study\study.py", line 502, in optimize
+    _optimize(
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\optuna\study\_optimize.py", line 68, in _optimize
+    _optimize_sequential(
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\optuna\study\_optimize.py", line 165, in _optimize_sequential
+    frozen_trial_id = _run_trial(study, func, catch)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\optuna\study\_optimize.py", line 263, in _run_trial
+    raise func_err
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\optuna\study\_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\optimize_pop_matrix.py", line 90, in objective
+    value = evaluate(predictions, ground_truth, metric=METRIC, n_recs=N_RECS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\pipeline\metric_registry.py", line 59, in evaluate
+    return with_metric.select(pl.col("_metric_value").mean()).collect().item()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\polars\_utils\deprecation.py", line 97, in wrapper
+    return function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\polars\lazyframe\opt_flags.py", line 361, in wrapper
+    return function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\polars\lazyframe\frame.py", line 2591, in collect
+    return engine_.collect(
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\tiago.morais\Documents\codes\user-agnostic-temporal-aware-rec-model\venv\Lib\site-packages\polars\lazyframe\engine.py", line 443, in collect
+    return wrap_df(ldf.collect(self.name, callback))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+polars.exceptions.ComputeError: cannot compare string with numeric type (i64)
+
 This error occurred in the following expression:
         [(col("app_package")) == (col("rec000"))]
 while evaluating this larger expression:
