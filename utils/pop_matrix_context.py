@@ -130,16 +130,25 @@ def rankings_to_predictions(rankings: np.ndarray, apps: np.ndarray, val_df: pl.D
     (``prepare_train_val_context``).
     """
     rec_cols = [f"rec{j:03d}" for j in range(rankings.shape[1])]
-    apps_or_none = np.concatenate([apps, np.array([None], dtype=object)])
-    rec_values = apps_or_none[rankings]
 
-    # schema explicito (nao so os nomes): se alguma coluna rec* ficar 100%
-    # None (nenhuma consulta do lote teve recomendacao naquela posicao),
-    # o polars infere Object em vez de Utf8 a partir do ndarray de objects
-    # -- e a comparacao `app_package == recXXX` (metrics/rank.py) quebra
-    # com um erro de tipo incompativel. Fixar Utf8 explicitamente evita
-    # depender da inferencia de tipos do polars nesse caso.
-    predictions = pl.DataFrame(rec_values, schema={c: pl.Utf8 for c in rec_cols})
+    # Sentinela de string vazia (nunca um app_package real -- sao sempre
+    # nao vazios) em vez de `None`/dtype object: `np.append(apps, "")`
+    # preserva o array como unicode nativo (`<U*`), nao promove pra
+    # `object`. Um ndarray unicode -> pl.DataFrame e sempre `String`, sem
+    # ambiguidade nenhuma -- diferente de um ndarray `object` com `None`
+    # misturado, cujo dtype inferido (Object, Int64, ...) ja se mostrou
+    # dependente da versao de numpy/pyarrow/polars instalada (foi a causa
+    # de um ComputeError em producao: "cannot compare string with numeric
+    # type" ao comparar `app_package` com uma coluna `recXXX` que virou
+    # i64 numa combinacao de versoes diferente desta). Trocar a sentinela
+    # por null e feito depois, ja dentro do polars.
+    apps_or_sentinel = np.append(apps, "")
+    rec_values = apps_or_sentinel[rankings]
+
+    predictions = pl.DataFrame(rec_values, schema=rec_cols)
+    predictions = predictions.with_columns(
+        [pl.when(pl.col(c) == "").then(None).otherwise(pl.col(c)).alias(c) for c in rec_cols]
+    )
     predictions = predictions.insert_column(0, val_df["timestamp"])
     predictions = predictions.insert_column(0, val_df["uid"])
     return predictions
