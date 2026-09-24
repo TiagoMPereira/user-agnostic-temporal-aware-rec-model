@@ -6,3 +6,4 @@ pyarrow
 sentence-transformers
 openpyxl
 optuna
+numba

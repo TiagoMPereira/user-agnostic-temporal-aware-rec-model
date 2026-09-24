@@ -8,6 +8,12 @@ from .decay_popularity_matrix import (
     pivot_daily_counts,
 )
 from .description_embeddings import generate_description_embeddings
+from .pop_matrix_context import (
+    TrainValContext,
+    prepare_train_val_context,
+    rankings_to_predictions,
+    verify_blacklist_respected,
+)
 
 __all__ = [
     "add_running_mean",
@@ -18,4 +24,8 @@ __all__ = [
     "decay_from_daily_counts",
     "pivot_daily_counts",
     "generate_description_embeddings",
+    "TrainValContext",
+    "prepare_train_val_context",
+    "rankings_to_predictions",
+    "verify_blacklist_respected",
 ]
