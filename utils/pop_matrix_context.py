@@ -133,7 +133,13 @@ def rankings_to_predictions(rankings: np.ndarray, apps: np.ndarray, val_df: pl.D
     apps_or_none = np.concatenate([apps, np.array([None], dtype=object)])
     rec_values = apps_or_none[rankings]
 
-    predictions = pl.DataFrame(rec_values, schema=rec_cols)
+    # schema explicito (nao so os nomes): se alguma coluna rec* ficar 100%
+    # None (nenhuma consulta do lote teve recomendacao naquela posicao),
+    # o polars infere Object em vez de Utf8 a partir do ndarray de objects
+    # -- e a comparacao `app_package == recXXX` (metrics/rank.py) quebra
+    # com um erro de tipo incompativel. Fixar Utf8 explicitamente evita
+    # depender da inferencia de tipos do polars nesse caso.
+    predictions = pl.DataFrame(rec_values, schema={c: pl.Utf8 for c in rec_cols})
     predictions = predictions.insert_column(0, val_df["timestamp"])
     predictions = predictions.insert_column(0, val_df["uid"])
     return predictions
