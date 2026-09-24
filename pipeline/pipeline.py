@@ -166,11 +166,22 @@ class PopularityPipeline:
     def score(self, config: PopularityConfig, ctx: PreparedContext) -> pl.DataFrame:
         """Gera as predicoes para uma config especifica, reaproveitando
         tudo que `prepare()` ja calculou. Mesma logica de ranking/desempate
-        de todos os scripts antigos (`_rank_top_n`, models/pop_utils.py)."""
+        de todos os scripts antigos (`_rank_top_n`, models/pop_utils.py).
+
+        NAO materializa uma matriz de scores `(n_interacoes, n_itens)`:
+        com o catalogo real (~10 mil itens) e centenas de milhares de
+        interacoes, isso seria uma alocacao de dezenas de GB (ver
+        docstring de pipeline/decay_strategies.py). So o que e barato em
+        qualquer escala -- o fator de reescala por interacao, um array de
+        escalares -- e resolvido aqui, vetorizado, fora do laco; a
+        extracao de linha (`strategy.score_row`) acontece uma interacao
+        por vez dentro de `_rank_and_format`, igual aos scripts antigos.
+        """
         strategy = config.strategy
         matrix_values = self._build_matrix_cached(strategy, config, ctx)
 
         idx_before = None
+        factors = None
         if config.window is not None:
             if not strategy.supports_window:
                 raise ValueError(
@@ -179,12 +190,9 @@ class PopularityPipeline:
                 )
             window_start = ctx.ref_dates - np.timedelta64(config.window, "D")
             idx_before = np.searchsorted(ctx.matrix_dates, window_start, side="right") - 1
+            factors = strategy.decay_factors(ctx.matrix_dates, ctx.idx_until, idx_before, **config.decay_params)
 
-        scores_matrix = strategy.windowed_scores(
-            matrix_values, ctx.matrix_dates, ctx.idx_until, idx_before, **config.decay_params
-        )
-
-        return self._rank_and_format(scores_matrix, matrix_values, ctx, config.n_recs)
+        return self._rank_and_format(strategy, matrix_values, idx_before, factors, ctx, config)
 
     def predict(self, config: PopularityConfig, df: pl.DataFrame, raw_df: pl.DataFrame) -> pl.DataFrame:
         """Atalho `prepare(split="test")` + `score()` para gerar as
@@ -214,11 +222,14 @@ class PopularityPipeline:
 
     def _rank_and_format(
         self,
-        scores_matrix: np.ndarray,
+        strategy: DecayStrategy,
         matrix_values: np.ndarray,
+        idx_before: np.ndarray | None,
+        factors: np.ndarray | None,
         ctx: PreparedContext,
-        n_recs: int,
+        config: PopularityConfig,
     ) -> pl.DataFrame:
+        n_recs = config.n_recs
         rec_cols = [f"rec{j:03d}" for j in range(n_recs)]
         schema_cols = ["uid", "timestamp", *rec_cols]
 
@@ -226,8 +237,12 @@ class PopularityPipeline:
         rows: list = []
 
         for i in range(len(ctx.uids)):
-            idx_until = ctx.idx_until[i]
-            scores = scores_matrix[i]
+            idx_until = int(ctx.idx_until[i])
+            ib = int(idx_before[i]) if idx_before is not None else None
+            factor = float(factors[i]) if factors is not None else None
+            # uma linha por vez (no maximo 2: idx_until, idx_before) --
+            # nunca a matriz de scores inteira (ver score() acima)
+            scores = strategy.score_row(matrix_values, idx_until, ib, factor, **config.decay_params)
 
             consumed_codes = ctx.consumed_lists[i]
             if consumed_codes:
