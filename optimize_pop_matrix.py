@@ -37,6 +37,7 @@ Exemplos:
 import argparse
 import os
 import pickle
+import random
 import time
 
 import optuna
@@ -58,6 +59,31 @@ INITIAL_WINDOWS = [0, 1, 7, 30, 90, 180, 365]
 
 INTERACTIONS_PATH = "data/processed/interactions_fe.parquet"
 RESULTS_DIR = "data/optuna/popularity_matrix"
+MAX_RESAMPLE_ATTEMPTS = 100
+
+
+class UniqueIntTPESampler(optuna.samplers.TPESampler):
+    """Evita repetir valores de ``window_days`` nos trials amostrados pelo TPE."""
+
+    def sample_independent(self, study, trial, param_name, param_distribution):
+        value = super().sample_independent(study, trial, param_name, param_distribution)
+        if param_name != "window_days":
+            return value
+
+        tried = {
+            t.params["window_days"]
+            for t in study.get_trials(deepcopy=False)
+            if t.number != trial.number and "window_days" in t.params
+        }
+
+        for _ in range(MAX_RESAMPLE_ATTEMPTS):
+            if value not in tried:
+                return value
+            value = super().sample_independent(study, trial, param_name, param_distribution)
+
+        low, high = int(param_distribution.low), int(param_distribution.high)
+        untried = [candidate for candidate in range(low, high + 1) if candidate not in tried]
+        return random.choice(untried) if untried else value
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,7 +132,7 @@ def main() -> None:
     print(f"Lendo {INTERACTIONS_PATH}...")
     ctx = prepare_train_val_context(INTERACTIONS_PATH)
 
-    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=args.seed))
+    study = optuna.create_study(direction="maximize", sampler=UniqueIntTPESampler(seed=args.seed))
 
     for window_days in INITIAL_WINDOWS:
         if window_days <= args.window_max_days:

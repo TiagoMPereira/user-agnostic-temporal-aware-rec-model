@@ -89,7 +89,7 @@ def prepare_train_val_context(interactions_path: str) -> TrainValContext:
     consumed = (
         lf.filter(pl.col("split") == "train")
         .group_by("uid")
-        .agg(pl.col("app_package").alias("consumed_apps"))
+        .agg(pl.col("app_package").cast(pl.Utf8).alias("consumed_apps"))
     )
 
     print("Selecionando interacoes de validacao...")
@@ -97,7 +97,7 @@ def prepare_train_val_context(interactions_path: str) -> TrainValContext:
         lf.filter(pl.col("split") == "val")
         .select(
             pl.col("uid"),
-            pl.col("app_package"),
+            pl.col("app_package").cast(pl.Utf8),
             pl.col("formated_date").alias("timestamp"),
             pl.col("formated_date").str.to_date().alias("date"),
         )
