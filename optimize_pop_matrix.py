@@ -1,13 +1,18 @@
 """Otimizacao do tamanho da janela (``window``) do recomendador por
 popularidade em janela deslizante (pacote ``pop_matrix``), via Optuna.
 
-Mesma base e split de ``predict_pop_matrix.py`` (``utils.prepare_train_val_context``:
-matriz de interacoes construida SOMENTE com o split de treino, split de
-teste removido logo no inicio e nunca usado, black list de cada consulta
-de validacao = apps que o proprio usuario ja consumiu no treino). A busca
-roda sobre o split de VALIDACAO, maximizando NDCG@20 -- reaproveita
-``pipeline.metric_registry.evaluate`` (a mesma formula ja usada por
-``optimize_popularity.py``) em vez de recalcular a metrica aqui.
+Mesma base e split de ``predict_pop_matrix.py --stage val`` (default --
+``utils.prepare_train_val_context``: matriz de interacoes construida
+SOMENTE com o split de treino, split de teste removido logo no inicio e
+nunca usado, black list de cada consulta de validacao = apps que o
+proprio usuario ja consumiu no treino). A busca roda sobre o split de
+VALIDACAO, maximizando NDCG@20 -- reaproveita ``utils.evaluate_ndcg20``
+(que por sua vez reaproveita ``metrics/``, a mesma formula ja usada por
+``evaluate_predictions.py``) em vez de recalcular a metrica aqui.
+
+Depois de escolhido o melhor ``window`` aqui, a avaliacao final roda em
+``predict_pop_matrix.py --stage test --window <melhor>`` (matriz
+treino+validacao, split de teste) -- este script nunca toca o teste.
 
 Espaco de busca: ``window_days`` inteiro em ``[0, --window-max-days]``
 (365 por padrao). ``window_days=0`` e o sentinela para "sem corte de
@@ -42,9 +47,8 @@ import time
 
 import optuna
 
-from pipeline.metric_registry import evaluate
 from pop_matrix import InteractionData, recommend_batch
-from utils import TrainValContext, prepare_train_val_context, rankings_to_predictions, verify_blacklist_respected
+from utils import PopMatrixContext, evaluate_ndcg20, prepare_train_val_context, rankings_to_predictions, verify_blacklist_respected
 
 SEED = 42
 N_TRIALS = 100
@@ -94,9 +98,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_objective(ctx: TrainValContext, seed: int, window_max_days: int):
-    ground_truth = ctx.val_df.select("uid", "app_package", "timestamp")
-
+def build_objective(ctx: PopMatrixContext, seed: int, window_max_days: int):
     def objective(trial: optuna.Trial) -> float:
         window_days = trial.suggest_int("window_days", 0, window_max_days)
         window = ctx.data.n_days if window_days == 0 else window_days
@@ -112,8 +114,8 @@ def build_objective(ctx: TrainValContext, seed: int, window_max_days: int):
             bl_indices=ctx.bl_indices,
             seed=seed,
         )
-        predictions = rankings_to_predictions(rankings, ctx.data.apps, ctx.val_df)
-        value = evaluate(predictions, ground_truth, metric=METRIC, n_recs=N_RECS)
+        predictions = rankings_to_predictions(rankings, ctx.data.apps, ctx.eval_df)
+        value = evaluate_ndcg20(predictions, ctx.eval_df, n_recs=N_RECS)
         elapsed = time.perf_counter() - start
 
         trial.set_user_attr("window", window)
@@ -161,8 +163,8 @@ def main() -> None:
         bl_indices=ctx.bl_indices,
         seed=args.seed,
     )
-    predictions = rankings_to_predictions(rankings, ctx.data.apps, ctx.val_df)
-    verify_blacklist_respected(predictions, ctx.val_df, [f"rec{j:03d}" for j in range(N_RECS)])
+    predictions = rankings_to_predictions(rankings, ctx.data.apps, ctx.eval_df)
+    verify_blacklist_respected(predictions, ctx.eval_df, [f"rec{j:03d}" for j in range(N_RECS)])
 
     results_dir = f"{RESULTS_DIR}/{args.seed}"
     os.makedirs(results_dir, exist_ok=True)

@@ -9,8 +9,11 @@ from .decay_popularity_matrix import (
 )
 from .description_embeddings import generate_description_embeddings
 from .pop_matrix_context import (
-    TrainValContext,
+    PopMatrixContext,
+    evaluate_ndcg20,
+    prepare_pop_matrix_context,
     prepare_train_val_context,
+    prepare_trainval_test_context,
     rankings_to_predictions,
     verify_blacklist_respected,
 )
@@ -24,8 +27,11 @@ __all__ = [
     "decay_from_daily_counts",
     "pivot_daily_counts",
     "generate_description_embeddings",
-    "TrainValContext",
+    "PopMatrixContext",
+    "prepare_pop_matrix_context",
     "prepare_train_val_context",
+    "prepare_trainval_test_context",
     "rankings_to_predictions",
     "verify_blacklist_respected",
+    "evaluate_ndcg20",
 ]
